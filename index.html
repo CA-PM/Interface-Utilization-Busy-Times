@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>CPU Utilization Distribution</title>
+    <link rel="stylesheet" href="./css/nv.d3.css"></link>
+    <script src="./lib/caHelperFunctions.js"></script>
+    <script src="./lib/jquery/jquery-1.11.1.min.js"></script>
+    <script src="./lib/d3/d3.min.js"></script>
+    <script src="./lib/nvd3/nv.d3.min.js"></script>
+    <script src="./lib/spin.js"></script>
+</head>
+
+<body>	
+		<row>
+	     <div id="barChart" style="height: 250px;">
+	       <svg></svg>
+	     </div>
+	   </row>
+	<script>
+
+    // Object to hold final results set
+    var finalData = [{key: "Data Set", values: []}];
+    var utilizationByHour=[];
+
+  // Use JQuery to determine when document loads
+  $(document).ready(function () {
+
+    var spinTarget = document.getElementById('barChart');
+    var spinner = new Spinner({color:'#000000', lines: 12}).spin(spinTarget);
+
+    // Get Parameters from CAPC Browser view URL
+    var testMode=getQueryVariable("test");
+    var id=getQueryVariable("id") // id={itemIdDa}
+    var startTime=getQueryVariable("startTime"); // startTime={TimeStartUTC}
+    var endTime=getQueryVariable("endTime"); // endTime={TimeEndUTC}
+    var itemType=getQueryVariable("itemType");
+    var mode=getQueryVariable("mode");
+    var groupBy=getQueryVariable("groupBy");
+    var formatTime;
+    var metric, label;
+
+    // Determine resolution to use within query as well as dynamically determine max # of rows
+    // based on time-range and resolution
+      var resolution;
+      if (endTime - startTime > 604800) { 
+        resolution="HOUR"; resolutionNumber=3600;
+      }
+      else { 
+        resolution="RATE";resolutionNumber=300
+      };
+      // Determine max rows needed in query based on time range and resolution
+      var rows=(endTime - startTime) / resolutionNumber; 
+      var url;
+
+      if (mode == "out") {
+        metric="im_UtilizationOut"
+        label="Utilization (Out)"
+      }
+      else if (mode == "in") {
+        metric="im_UtilizationIn"
+        label="Utilization (In)"
+      }
+      else {
+        metric="im_Utilization"
+        label="Utilization (Total)"
+      }
+
+      if (groupBy == "hour"){
+        formatTime=d3.time.format("%H");
+        xLabel="Hour of Day";
+      }
+      else if (groupBy == "dayOfWeek") {
+        formatTime=d3.time.format("%a")
+        xLabel="Day of Week";
+      }
+      else if (groupBy == "dayOfMonth") {
+        formatTime=d3.time.format("%_d")
+        xLabel="Day of Month"
+      }
+      else {
+        formatTime=d3.time.format("%H");
+        xLabel="Hour of Day";
+      }
+
+    // Determine URL or data set to load
+      if (testMode) {
+          url="./portmfs.csv";
+          metricFamily="portmfs"
+          metric="im_UtilizationIn";
+      }
+      else {
+
+        if (itemType == "device") {
+            url="/pc/odata/api/portmfs?$select=Timestamp," + metric +
+              "&$filter=((DeviceItemID eq " + id + "))" +
+              "&starttime=" + startTime + "&endtime=" + endTime + "&resolution=" + resolution +
+              "&$top=" + rows +
+              "&$format=text/csv";
+        }
+        else if (itemType == "group" || itemType == "site") {
+            url="/pc/odata/api/portmfs?$select=Timestamp," + metric +
+              "&$filter=((groups/ID eq " + id + "))" +
+              "&starttime=" + startTime + "&endtime=" + endTime + "&resolution=" + resolution +
+              "&$top=" + rows +
+              "&$format=text/csv";
+        }
+        else if (itemType == "interface" || itemType == "site") {
+            url="/pc/odata/api/portmfs?$select=Timestamp," + metric +
+              "&$filter=((ID eq " + id + "))" +
+              "&starttime=" + startTime + "&endtime=" + endTime + "&resolution=" + resolution +
+              "&$top=" + rows +
+              "&$format=text/csv";
+        }
+        
+
+        console.log("URL: " + url);
+
+      }
+    // Load data set using D3.js 
+      d3.csv(url,function(error, data) {
+        if (error) {
+          spinner.stop();
+          alert("Error loading data set: " + error)
+        }
+        else {
+          spinner.stop();
+          parseData(data); // Parse and bucketize the data
+        }
+    });
+
+  function parseData(thisData) {
+
+    var formatPercent=d3.format(",.1%") 
+    utilizationByHour = d3.nest()
+        .key(function(d) { 
+            var date= new Date(d.Timestamp * 1000);
+            return formatTime(date);
+            }
+          )
+        .sortKeys(d3.ascending)
+        .rollup(function(values) { 
+          return d3.mean(values, function(d) { 
+            return Number(d[metric]); 
+          })
+        })
+        .entries(thisData);
+
+    utilizationByHour.forEach(function (d) {
+      finalData[0].values.push({
+        "label": d.key, 
+        "value": d.values.toFixed(2)
+      })
+    })
+
+    nv.addGraph(function() {
+      var chart = nv.models.discreteBarChart()
+              .x(function(d) { return d.label })
+              .y(function(d) { return d.value })
+              .showValues(false)
+              .color(["#747c96"])
+              .margin({top: 30, right: 50, bottom: 50, left: 60})
+      chart.options({forceY: [0,100]})
+      chart.yAxis.axisLabel("Average Utilization");
+      chart.yAxis.tickFormat(d3.format(".3s"));
+      chart.xAxis.axisLabel(xLabel);
+      d3.select('#barChart svg')
+              .datum(finalData)
+              .call(chart);
+      nv.utils.windowResize(chart.update);
+      return chart;
+    });
+  }
+});
+
+</script>
+</body>
+</html>
+
+
